@@ -1,8 +1,77 @@
 # Work with Python 3.6
+import praw
 import discord
 import json
 import requests
 import fileinput
+import os
+import ctypes
+import queue
+from idna import idnadata
+import configparser
+import glob
+
+def readMemeList(memeList):
+    file = open(memeList, "r")
+    lines = file.readlines()
+    file.close()
+    filenames = []
+    for line in lines:
+        filenames.append(line)
+    return filenames
+
+def writeToMemeList(memelist,line):
+    file = open(memelist, "r")
+    lines = file.readlines()
+    file.close()
+
+    file = open(memelist,"w")
+    for line in lines:
+        file.write(line + "\n")
+    file.write(line + "\n")
+    file.close()
+
+def loadMemesToList():
+    return os.listdir(path=FILEPATH)
+
+def get_pictures_from_subreddit(data, subreddit):
+    global extension
+    for i, x in enumerate(data):
+        current_post = data[i]['data']
+        image_url = current_post['url']
+        if '.png' in image_url:
+            extension = '.png'
+        elif '.jpg' in image_url or '.jpeg' in image_url:
+            extension = '.jpeg'
+        elif 'imgur' in image_url:
+            image_url += '.jpeg'
+            extension = '.jpeg'
+        else:
+             continue
+        # redirects = False prevents thumbnails denoting removed images from getting in
+        image = requests.get(image_url, allow_redirects=False)
+        if (image.status_code == 200):
+            try:
+                print("WRITING FILE: "+str(i))
+                output_filehandle = open(FILEPATH + str(i) + extension, 'wb')
+                output_filehandle.write(image.content)
+                path = str(FILEPATH)+str(i)+str(extension)
+                print(path)
+                writeToMemeList(memeFileList,path)
+            except Exception as e:
+                print(str(e))
+    print("Done getting images!")
+
+def get_image():
+    config = configparser.ConfigParser()
+    config.read('args.ini')
+    top = config['Default']['top']
+    subreddit = config['Default']['subreddit']
+    number = config['Default']['number']
+    url = 'https://www.reddit.com/r/{}/top/.json?sort=top&t={}&limit={}'.format(subreddit, top, number)
+    response = requests.get(url, headers={'User-agent': USERAGENT})
+    data = response.json()['data']['children']
+    return get_pictures_from_subreddit(data, subreddit)
 
 def getSquadsFromFile(filename):
     file = open(filename, "r")
@@ -29,15 +98,20 @@ def writeSquadToFile(squadList,squadName,squadMembers):
     embed.add_field(name="Members: ", value=squadMembers, inline=False)
     return embed
 
-def getTokenFromFile(fileName):
+def getFromFile(fileName,command):
     """GET THE TOKEN FROM THE CONFIG FILE"""
-    configFile = open(fileName, "r")
-    linelist = configFile.readlines()
+    file = open(fileName, "r")
+    linelist = file.readlines()
     for line in linelist:
-        split = line.split("=")
-        if split[0] == "TOKEN":
-            token = split[1]
-            return token
+        if line.startswith("#") or line == "":
+            continue
+        else:
+            split = line.split("=")
+            if split[0] == command:
+                item = split[1]
+                return item[:len(item) - 1]
+            else:
+                continue
 
 def callSquad(filename,squadName):
     file = open(filename,"r")
@@ -81,131 +155,67 @@ def checkUsernameBeforeAdding(name):
                 return True
     return False
 
-"""VARIABLES"""
-teamNames = ["ALPHA","BETA","CHARLY","DELTA","ECHO","FOXTROT","GOLF","HOTEL","INDIA",
-             "JULIET","KILO","LIMA","MIKE","NOVEMBER","OSCAR","PAPA","QUEBEC","ROMEO",
-             "SIERRA","TANGO","UNIFORM","VICTOR","WHISKEY","X-RAY","YANKEE","ZULU"]
-squadList = "squadList.txt"
-
-"""GET THE TOKEN FROM A FILE"""
-TOKEN = getTokenFromFile("config.txt")
+"""GET THE SECRETS FROM A FILE"""
+configFile = "config.txt"
+TOKEN = getFromFile(configFile,"TOKEN")
+client_id = getFromFile(configFile,"client_id")
+username = getFromFile(configFile,"username")
+password = getFromFile(configFile,"password")
+client_secret = getFromFile(configFile,"client_secret")
+USERAGENT = "fake_user_agent v1.0"
+FILEPATH = os.path.join(os.getcwd(), r'C:\Users\Twan\PycharmProjects\Discord\images\memes\\')
+memeFileList = "memelist.txt"
+memeFiles = readMemeList(memeFileList)
+print(len(memeFiles))
 
 """SET THE CLIENT"""
 client = discord.Client()
 
+reddit = praw.Reddit(client_id=client_id,
+                     client_secret=client_secret,
+                     password=password,
+                     user_agent='testscript by /u/fakebot3',
+                     username=username)
+
 @client.event
 async def on_message(message):
-
+    global memeFileList
     # we do not want the bot to reply to itself
     if message.author == client.user:
         return
 
-    #HELP
-    elif message.content.startswith('!help'):
-        embed = discord.Embed(title="Battlefield V Assembler Bot Helper!", description="The following functions are implemented in this bot... every argument is seperated with a whitespace.", color=0x00ff00)
-        embed.add_field(name="!addSquad", value="How to use: !addSquad [SQUADNAME] [@USER#XXXX] [@USER#XXXX] ... \n Details: Creates a squad with the given name and the given players", inline=False)
-        embed.add_field(name="!removeSquad", value="How to use: !removeSquad [SQUADNAME]                         \n Details: Removes a given squad and all of it's members.", inline=False)
-        embed.add_field(name="!showSquads", value="How to use: !showSquads                                       \n Details: Returns an overview of the created squads and their members.", inline=False)
-        embed.add_field(name="!squadNames", value="How to use: !squadNames                                       \n Details: Returns an overview of all the squad names.", inline=False)
-        embed.add_field(name="!usableSquadNames", value="How to use: !usableSquadNames                           \n Details: Returns an overview of all the squad names that a user can use to make a new squad.", inline=False)
-        embed.add_field(name="!ASSEMBLE", value="How to use: !ASSEMBLE [SQUADNAME]                               \n Details: Calls out the squad to play a game!", inline=False)
-        embed.add_field(name="Questions?", value="Join the support discord for questions or idea's! https://discord.gg/nT9UM3", inline=False)
-        await client.send_message(message.channel, embed=embed)
+    elif message.content.startswith('!test'):
+        print("Message ID: " + str(message.id))
+        print("Message Type: " + str(message.type))
+        print("Message Channel: " + str(message.channel))
+        """Check whether it's a DM or a server message."""
+        if message.server is not None:
+            print("Message on server: " + str(message.server))
+            members  = ""
+            for member in message.server.members:
+                members += str(member) + ", Playing: " + str(member.game) + "\n "
+            print("Members on server: " + members)
 
-    #SAVE THE SQUAD TO A FILE
-    elif message.content.startswith('!addSquad'):
-        playersGiven = message.content.split(" ")
-        squadName = playersGiven[1]
-        playerList = playersGiven[2:]
-        takenTeamNames = getSquadsFromFile(squadList)
-        #Name has to be legit & has to be unique
-        if squadName in teamNames and squadName not in takenTeamNames:
-            stringOfMembers = ""
-            for member in playerList:
-                if checkUsernameBeforeAdding(member):
-                    stringOfMembers = stringOfMembers + " " + member
-            try:
-                await client.send_message(message.channel, embed=writeSquadToFile(squadList,squadName,stringOfMembers))
-            except discord.errors.HTTPException:
-                msg = 'There seems to be an error in the command... Check the support page for more info. {0.author.mention}'.format(message)
-                removeSquad(squadList, squadName)
-                await client.send_message(message.channel,msg)
+    elif message.content.startswith("!dankmeme"):
+        if(len(memeFiles) < 1):
+            print(len(memeFiles))
+            await client.send_message(message.channel,"No memes, let's me hook you up with a few, brb.")
+            get_image()
+            await client.send_message(message.channel,"I got 'm.")
+            await client.send_file(message.channel,str(FILEPATH)+memeFileList[0])
         else:
-            msg = "The squad name is either taken or not on the list of squads.".format(message)
-            await client.send_message(message.channel, msg)
+            #Send a file
+            await client.send_file(message.channel,str(FILEPATH)+memeFileList[0])
+    #delete the [0] object.
+    os.remove(FILEPATH+memeFileList[0])
+    memeFileList.remove(0)
 
-    #REMOVE A SQUAD FROM THE FILE
-    elif message.content.startswith('!removeSquad'):
-        content = message.content.split(" ")
-        squadName = content[1]
-
-        #Name has to be legit & has to be used.
-        takenTeamNames = getSquadsFromFile(squadList)
-        if squadName in teamNames and squadName in takenTeamNames:
-            await client.send_message(message.channel, embed=removeSquad(squadList,squadName))
-        else:
-            msg = "There is no such Squad found.".format(message)
-            await client.send_message(message.channel, msg)
-
-    #SHOW AN OVERVIEW OF ALL THE SQUADS
-    elif message.content.startswith('!showSquads'):
-        msg = ""
-        tempMemberList = ""
-        for squad in getSquadsFromFile(squadList):
-            for member in getSquadMembers(squadList,squad):
-                tempMemberList = tempMemberList + " " + member
-            msg = msg + (squad + tempMemberList + "\n")
-            tempMemberList = ""
-        embed = discord.Embed(title="Squad list", description="An overview of what squads are callable.", color=0x00ff00)
-        temp = msg.split("\n")
-        print(temp)
-        for item in temp:
-            content = item.split(" ")
-            if content[0] != "":
-                tempPlayerList = ""
-                for player in content[1:]:
-                    tempPlayerList = tempPlayerList + " " + player
-                embed.add_field(name="Squad: " + content[0], value="Members: " + tempPlayerList, inline=False)
-        await client.send_message(message.channel, embed=embed)
-
-    #CALLOUT THE SQUAD
-    elif message.content.startswith('!ASSEMBLE'):
-        messageContent = message.content.split(" ")
-        squadName = messageContent[1]
-        takenTeamNames = getSquadsFromFile(squadList)
-        # Name has to be legit & has to be unique
-        if squadName in teamNames and squadName in takenTeamNames:
-            #Call the members of the squad
-            msg = callSquad(squadList,squadName)
-        else:
-            msg = "There is no such Squad found.".format(message)
-        await client.send_message(message.channel, msg)
-
-    #Returns the possible squad names
-    elif message.content.startswith("!squadNames"):
-        nameString = ""
-        for name in teamNames:
-            nameString = nameString + " " + name + "\n"
-        embed = discord.Embed(title="Squad names", color=0x00ff00)
-        embed.add_field(name="Possible squad names", value=nameString, inline=False)
-        await client.send_message(message.channel,embed=embed)
-
-    #Returns the usable squad names
-    elif message.content.startswith("!usableSquadNames"):
-        usedNames = getSquadsFromFile(squadList)
-        nameString = ""
-        for name in teamNames:
-            if name not in usedNames:
-                nameString = nameString + " " + name + "\n"
-        embed = discord.Embed(title="Squad names", color=0x00ff00)
-        embed.add_field(name="usable squad names are: ", value=nameString, inline=False)
-        await client.send_message(message.channel,embed=embed)
 
 @client.event
 async def on_ready():
     print('Logged in as')
-    print(client.user.name)
-    print(client.user.id)
+    print("Username: " + client.user.name)
+    print("User ID:" + client.user.id)
     print('------')
 
 client.run(TOKEN)
